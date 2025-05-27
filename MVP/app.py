@@ -1,73 +1,64 @@
 import streamlit as st
 import pandas as pd
+import os
 
-st.title("Recomendador de progresión de carga (+2%) con Feedback")
+st.title("Recomendador interactivo de progresión de carga")
 
-# 1) Subida del CSV
-uploaded_file = st.file_uploader("1) Sube tu CSV de historial de entrenamiento", type=["csv"])
-if not uploaded_file:
-    st.info("Carga un archivo CSV para obtener recomendaciones.")
-    st.stop()
+# 1) Lista de ejercicios
+ejercicios = ['sentadilla', 'press banca', 'peso muerto', 'dominadas', 'remo con barra']
 
-# 2) Lectura y normalización
-df = pd.read_csv(uploaded_file)
-# Normalizar columnas de fecha y ejercicio
-if "Date" in df.columns:
-    df["fecha"] = pd.to_datetime(df["Date"], errors="coerce")
-else:
-    df["fecha"] = pd.to_datetime(df["fecha"], errors="coerce")
-if "Exercise Name" in df.columns:
-    df["ejercicio"] = df["Exercise Name"]
-else:
-    df["ejercicio"] = df["ejercicio"]
-if "Weight" in df.columns:
-    df["peso (kg)"] = df["Weight"]
-elif "peso (kg)" not in df.columns:
-    st.error("Tu CSV debe tener columna 'Weight' o 'peso (kg)'")
-    st.stop()
+st.subheader("1) Introduce tus sesiones")
 
-# 3) Cálculo de la recomendación (+2%)
-df = df.sort_values(["ejercicio", "fecha", "set"])
-last = df.groupby("ejercicio").last().reset_index()
-last["recomendado (kg)"] = (last["peso (kg)"] * 1.02).round(1)
+n = st.number_input("¿Cuántos registros quieres introducir?", min_value=1, max_value=20, value=5, step=1)
 
-# 4) Mostrar tabla de recomendaciones
-st.subheader("2) Recomendaciones de carga")
-st.table(last[["ejercicio", "peso (kg)", "recomendado (kg)"]])
+# Recopilamos las filas con inputs dinámicos
+filas = []
+for i in range(int(n)):
+    st.markdown(f"**Registro {i+1}**")
+    ex = st.selectbox(f"Ejercicio (fila {i+1})", ejercicios, key=f"ex_{i}")
+    s  = st.number_input(f"Set (fila {i+1})", min_value=1, max_value=10, value=1, key=f"set_{i}")
+    p  = st.number_input(f"Peso (kg) (fila {i+1})", min_value=0.0, step=0.5, key=f"peso_{i}")
+    r  = st.number_input(f"Reps realizadas (fila {i+1})", min_value=0, max_value=20, value=7, key=f"reps_{i}")
+    t  = st.number_input(f"Objetivo de reps (fila {i+1})", min_value=1, max_value=20, value=7, key=f"target_{i}")
+    filas.append({"ejercicio": ex, "set": s, "peso (kg)": p, "reps": r, "target": t})
 
-# 5) Formulario de feedback
-st.subheader("3) Tu Feedback")
-with st.form("feedback_form"):
-    utilidad = st.slider(
-        "¿Qué tan útil te parece la recomendación?",
-        min_value=1, max_value=5, value=3, step=1
-    )
-    claridad = st.slider(
-        "¿La recomendación es clara?",
-        min_value=1, max_value=5, value=4, step=1
-    )
-    confianza = st.slider(
-        "¿Confiarías en usar esto en tu entrenamiento?",
-        min_value=1, max_value=5, value=3, step=1
-    )
-    mejoras = st.text_area(
-        "¿Qué mejorarías o agregarías?"
-    )
-    enviado = st.form_submit_button("Enviar Feedback")
-    if enviado:
-        # Guardar feedback
-        fb = {
-            "timestamp": pd.Timestamp.now(),
-            "utilidad": utilidad,
-            "claridad": claridad,
-            "confianza": confianza,
-            "mejoras": mejoras
-        }
-        fb_df = pd.DataFrame([fb])
-        fb_df.to_csv(
-            "feedback.csv",
-            mode="a",
-            header=not pd.io.common.file_exists("feedback.csv"),
-            index=False
-        )
-        st.success("¡Gracias por tu feedback!")
+# Cuando hayan introducido todo, calculamos
+if st.button("Calcular recomendaciones"):
+    df = pd.DataFrame(filas)
+    # Función de recomendación
+    def calcular_recomendado(row):
+        if row['reps'] < row['target']:
+            faltan = row['target'] - row['reps']
+            factor = 1 - 0.05 * faltan
+        else:
+            factor = 1.02
+        return round(row['peso (kg)'] * factor, 1)
+    df['recomendado (kg)'] = df.apply(calcular_recomendado, axis=1)
+    
+    st.subheader("2) Recomendaciones por serie")
+    st.table(df[['ejercicio','set','peso (kg)','reps','target','recomendado (kg)']])
+    
+    # Feedback
+    st.subheader("3) Tu feedback")
+    with st.form("feedback_form"):
+        utilidad = st.slider("¿Qué tan útil te parece esta funcionalidad?", 1, 5, 3)
+        claridad = st.slider("¿La interface es clara?", 1, 5, 4)
+        confianza = st.slider("¿Confiarías en usarla en tu entrenamiento?", 1, 5, 3)
+        mejoras = st.text_area("¿Qué mejorarías o agregarías?")
+        enviado = st.form_submit_button("Enviar feedback")
+        if enviado:
+            fb = {
+                "timestamp": pd.Timestamp.now(),
+                "utilidad": utilidad,
+                "claridad": claridad,
+                "confianza": confianza,
+                "mejoras": mejoras
+            }
+            fb_df = pd.DataFrame([fb])
+            fb_df.to_csv(
+                "feedback.csv",
+                mode="a",
+                header=not os.path.exists("feedback.csv"),
+                index=False
+            )
+            st.success("¡Gracias por tu feedback!")
