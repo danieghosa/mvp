@@ -1,72 +1,49 @@
-
 import streamlit as st
 import pandas as pd
-import os
+import joblib
 
-st.title("Recomendador interactivo de progresión de carga")
+# 1) Configuración de página (si no la tienes ya al principio)
+st.set_page_config(page_title="NextLift IA", layout="centered")
 
-# 1) Lista inicial de ejercicios + opción “otro”
-ejercicios = ['sentadilla', 'press banca', 'peso muerto', 'dominadas', 'remo con barra', 'otro ejercicio']
+# 2) Carga del modelo
+@st.cache_resource
+def load_model():
+    return joblib.load("nextlift_model.pkl")
+model = load_model()
 
-st.subheader("1) Introduce tus ejercicios")
+st.title("NextLift IA – Recomendaciones con IA")
 
-n = st.number_input("¿Cuántos ejercicios quieres introducir?", min_value=1, max_value=20, value=5, step=1)
+# 3) Inputs de usuario
+ejercicios = ["sentadilla", "press banca", "peso muerto", "otro ejercicio"]
+ejercicio = st.selectbox("Ejercicio", ejercicios)
+if ejercicio == "otro ejercicio":
+    ejercicio = st.text_input("Nombre de ejercicio").strip()
 
-# Recopilamos las filas con inputs dinámicos
-filas = []
-for i in range(int(n)):
-    st.markdown(f"**Ejercicio {i+1}**")
-    ex_sel = st.selectbox(f"Elige ejercicio (fila {i+1})", ejercicios, key=f"ex_{i}")
-    # Si elige “otro ejercicio”, mostramos un text_input para el nombre
-    if ex_sel == "otro ejercicio":
-        ex = st.text_input(f"Nombre de ejercicio personalizado (fila {i+1})", key=f"otro_{i}")
-    else:
-        ex = ex_sel
+peso_prev  = st.number_input("Peso anterior (kg)",   min_value=0.0, step=0.5, format="%.1f")
+reps_prev  = st.number_input("Reps anteriores",       min_value=0,   max_value=20,  value=8, step=1)
+rpe_prev   = st.number_input("RPE anterior (1–10)",   min_value=0.0, max_value=10.0, value=7.0, step=0.5, format="%.1f")
+rir_prev   = st.number_input("RIR anterior (0–10)",   min_value=0.0, max_value=10.0, value=2.0, step=0.5, format="%.1f")
+delta_peso = st.number_input("Δ Peso vs anterior (kg)",                  step=0.1, format="%.1f")
+dias_entre = st.number_input("Días desde serie anterior", min_value=0, step=1)
 
-    s  = st.number_input(f"Set (fila {i+1})", min_value=1, max_value=10, value=1, key=f"set_{i}")
-    p  = st.number_input(f"Peso (kg) (fila {i+1})", min_value=0.0, step=0.5, key=f"peso_{i}")
-    r  = st.number_input(f"Reps realizadas (fila {i+1})", min_value=0, max_value=20, value=7, key=f"reps_{i}")
-    t  = st.number_input(f"Objetivo de reps (fila {i+1})", min_value=1, max_value=20, value=7, key=f"target_{i}")
-    filas.append({"ejercicio": ex, "set": s, "peso (kg)": p, "reps": r, "target": t})
+# 4) Botón de predicción
+if st.button("Calcular carga recomendada"):
+    # Construir DataFrame con **exactamente** las 6 columnas que espera el modelo
+    X_new = pd.DataFrame([{
+        "peso_prev":  peso_prev,
+        "reps_prev":  reps_prev,
+        "rpe_prev":   rpe_prev,
+        "rir_prev":   rir_prev,
+        "delta_peso": delta_peso,
+        "dias_entre": dias_entre
+    }])
 
-# Cuando hayan introducido todo, calculamos
-if st.button("Calcular recomendaciones"):
-    df = pd.DataFrame(filas)
-    # Función de recomendación
-    def calcular_recomendado(row):
-        if row['reps'] < row['target']:
-            faltan = row['target'] - row['reps']
-            factor = 1 - 0.05 * faltan
-        else:
-            factor = 1.02
-        return round(row['peso (kg)'] * factor, 1)
+    # Predecir
+    recomendado = model.predict(X_new)[0]
+    st.success(f"🔮 Siguiente carga recomendada: **{recomendado:.1f} kg**")
 
-    df['recomendado (kg)'] = df.apply(calcular_recomendado, axis=1)
-
-    st.subheader("2) Recomendaciones por ejercicio")
-    st.table(df[['ejercicio','set','peso (kg)','reps','target','recomendado (kg)']])
-
-    # Feedback
-    st.subheader("3) Tu feedback")
-    with st.form("feedback_form"):
-        utilidad = st.slider("¿Qué tan útil te parece esta funcionalidad?", 1, 5, 3)
-        claridad = st.slider("¿La interfaz es clara?", 1, 5, 4)
-        confianza = st.slider("¿Confiarías en usarla en tu entrenamiento?", 1, 5, 3)
-        mejoras = st.text_area("¿Qué mejorarías o agregarías?")
-        enviado = st.form_submit_button("Enviar feedback")
-        if enviado:
-            fb = {
-                "timestamp": pd.Timestamp.now(),
-                "utilidad": utilidad,
-                "claridad": claridad,
-                "confianza": confianza,
-                "mejoras": mejoras
-            }
-            fb_df = pd.DataFrame([fb])
-            fb_df.to_csv(
-                "feedback.csv",
-                mode="a",
-                header=not os.path.exists("feedback.csv"),
-                index=False
-            )
-            st.success("¡Gracias por tu feedback!")
+    # Mostrar resumen
+    resumen = X_new.copy()
+    resumen["recomendado (kg)"] = round(recomendado, 1)
+    st.subheader("Tus datos y la recomendación")
+    st.table(resumen.T.rename(columns={0: "Valor"}))

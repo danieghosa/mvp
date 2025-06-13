@@ -1,49 +1,81 @@
 import streamlit as st
 import pandas as pd
-import joblib
+import matplotlib.pyplot as plt
+from datetime import datetime
 
-# 1) Configuración de página (si no la tienes ya al principio)
+# 0) Configuración de página
 st.set_page_config(page_title="NextLift IA", layout="centered")
 
-# 2) Carga del modelo
-@st.cache_resource
-def load_model():
-    return joblib.load("nextlift_model.pkl")
-model = load_model()
+# 1) Logo
+st.image("logo.png", width=200)
+st.title("NextLift IA")
 
-st.title("NextLift IA – Recomendaciones con IA")
+# Inicializamos estado
+if "step" not in st.session_state:
+    st.session_state.step = 1
+if "exercise" not in st.session_state:
+    st.session_state.exercise = None
+if "entries" not in st.session_state:
+    st.session_state.entries = []
 
-# 3) Inputs de usuario
-ejercicios = ["sentadilla", "press banca", "peso muerto", "otro ejercicio"]
-ejercicio = st.selectbox("Ejercicio", ejercicios)
-if ejercicio == "otro ejercicio":
-    ejercicio = st.text_input("Nombre de ejercicio").strip()
+# Función para reiniciar todo
+def reset():
+    st.session_state.step = 1
+    st.session_state.exercise = None
+    st.session_state.entries = []
 
-peso_prev  = st.number_input("Peso anterior (kg)",   min_value=0.0, step=0.5, format="%.1f")
-reps_prev  = st.number_input("Reps anteriores",       min_value=0,   max_value=20,  value=8, step=1)
-rpe_prev   = st.number_input("RPE anterior (1–10)",   min_value=0.0, max_value=10.0, value=7.0, step=0.5, format="%.1f")
-rir_prev   = st.number_input("RIR anterior (0–10)",   min_value=0.0, max_value=10.0, value=2.0, step=0.5, format="%.1f")
-delta_peso = st.number_input("Δ Peso vs anterior (kg)",                  step=0.1, format="%.1f")
-dias_entre = st.number_input("Días desde serie anterior", min_value=0, step=1)
+# 2) Paso 1: seleccionar ejercicio
+if st.session_state.step == 1:
+    st.subheader("Paso 1: Elige ejercicio")
+    ex = st.selectbox("Ejercicio", ["sentadilla","press banca","peso muerto","otro ejercicio"])
+    if ex == "otro ejercicio":
+        ex = st.text_input("Nombre de ejercicio personalizado")
+    if st.button("Confirmar ejercicio"):
+        if ex:
+            st.session_state.exercise = ex
+            st.session_state.step = 2
 
-# 4) Botón de predicción
-if st.button("Calcular carga recomendada"):
-    # Construir DataFrame con **exactamente** las 6 columnas que espera el modelo
-    X_new = pd.DataFrame([{
-        "peso_prev":  peso_prev,
-        "reps_prev":  reps_prev,
-        "rpe_prev":   rpe_prev,
-        "rir_prev":   rir_prev,
-        "delta_peso": delta_peso,
-        "dias_entre": dias_entre
-    }])
+# 3) Paso 2: introducir serie a serie
+elif st.session_state.step == 2:
+    st.subheader(f"Paso 2: Registra tu serie de {st.session_state.exercise}")
+    with st.form("serie_form"):
+        peso = st.number_input("Peso (kg)", min_value=0.0, step=0.5, format="%.1f")
+        reps = st.number_input("Reps realizadas", min_value=0, max_value=20, value=8, step=1)
+        rpe  = st.number_input("RPE", min_value=0.0, max_value=10.0, value=7.0, step=0.5, format="%.1f")
+        submitted = st.form_submit_button("Guardar serie")
+    if submitted:
+        # calcular recomendación (+2 % de la carga de esta serie)
+        recomendado = round(peso * 1.02, 1)
+        # almacenar
+        st.session_state.entries.append({
+            "timestamp": datetime.now(),
+            "ejercicio": st.session_state.exercise,
+            "peso": peso,
+            "reps": reps,
+            "rpe": rpe,
+            "recomendado": recomendado
+        })
+        st.success(f"Siguiente carga recomendada: {recomendado} kg")
+    # mostrar tablas y botón de terminar
+    if st.session_state.entries:
+        st.subheader("Series registradas")
+        df = pd.DataFrame(st.session_state.entries).drop(columns="timestamp")
+        st.table(df)
+        # botón para pasar al resumen final
+        if st.button("Finalizar y ver resumen"):
+            st.session_state.step = 3
 
-    # Predecir
-    recomendado = model.predict(X_new)[0]
-    st.success(f"🔮 Siguiente carga recomendada: **{recomendado:.1f} kg**")
-
-    # Mostrar resumen
-    resumen = X_new.copy()
-    resumen["recomendado (kg)"] = round(recomendado, 1)
-    st.subheader("Tus datos y la recomendación")
-    st.table(resumen.T.rename(columns={0: "Valor"}))
+# 4) Paso 3: resumen y gr����fica
+elif st.session_state.step == 3:
+    st.subheader("Paso 3: Resumen y progresión")
+    df = pd.DataFrame(st.session_state.entries)
+    st.table(df.drop(columns="timestamp"))
+    # gráfica de evolución de peso
+    fig, ax = plt.subplots()
+    ax.plot(df["recomendado"].reset_index(drop=True), marker="o", linestyle="-")
+    ax.set_title(f"Progresión recomendada para {st.session_state.exercise}")
+    ax.set_xlabel("Serie")
+    ax.set_ylabel("Carga (kg)")
+    st.pyplot(fig)
+    # opción de reiniciar
+    st.button("↺ Comenzar de nuevo", on_click=reset)
